@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
@@ -29,11 +28,12 @@ func main() {
 	}
 
 	defer conn.Close();
-	bufio.NewReader(conn).ReadString('\n');
 
-	response := "+PONG\r\n"
+	data := make([]byte, 128)
+	
+	conn.Read(data)
 
-	conn.Write([]byte(response))
+	conn.Write([]byte("+PONG\r\n"))
 
 
 }
