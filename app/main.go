@@ -10,6 +10,24 @@ import (
 var _ = net.Listen
 var _ = os.Exit
 
+func run(connection net.Conn){
+	for {
+
+		buf := make([]byte,128)
+		_,err := connection.Read(buf)
+		
+		if(err != nil){
+			fmt.Println("Error occurred while reading",err)
+			return
+		}
+		
+		connection.Write([]byte("+PONG\r\n"))
+		
+	}
+
+
+}
+
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
@@ -27,13 +45,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	defer conn.Close();
-
-	data := make([]byte, 128)
-	
-	conn.Read(data)
-
-	conn.Write([]byte("+PONG\r\n"))
-
+	run(conn)
+	defer conn.Close()
 
 }
