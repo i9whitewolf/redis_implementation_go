@@ -5,7 +5,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
@@ -17,7 +19,7 @@ func handleConnection(connection net.Conn, redisStore map[string]string){
 	defer connection.Close()
 
 	for {
-		buf := make([]byte,128)
+		buf := make([]byte,4096)
 		n, err := connection.Read(buf)
 		
 		if(err != nil){
@@ -39,6 +41,32 @@ func handleConnection(connection net.Conn, redisStore map[string]string){
 			fmt.Fprintf(connection, "$%d\r\n%v\r\n", len(lines[4]),lines[4])
 		case "SET" :
 			redisStore[lines[4]] = lines[6]
+			argCount, err := strconv.Atoi(lines[0][1:])
+			if(err != nil){
+				fmt.Println("error converting string to in using Atoi", err.Error())
+			}
+			if(argCount > 3){
+				switch strings.ToUpper(lines[8]){
+				case "EX" :
+					setTime, err := strconv.Atoi(lines[10])
+					if err != nil{
+						fmt.Println("invalid expiry time: ", err.Error())
+					}
+					time.AfterFunc(time.Duration(setTime) * time.Second,func(){
+						delete(redisStore,lines[4])
+					})
+
+				case "PX" :
+					setTime, err := strconv.Atoi(lines[10])
+					if err != nil{
+						fmt.Println("invalid expiry time: ", err.Error())
+					}
+					time.AfterFunc(time.Duration(setTime) * time.Millisecond,func(){
+						delete(redisStore,lines[4])
+					})
+
+				}
+			}
 			connection.Write([]byte("+OK\r\n"))
 		case "GET" :
 			val, ok := redisStore[lines[4]]
