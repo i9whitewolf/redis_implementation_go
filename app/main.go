@@ -12,7 +12,7 @@ import (
 var _ = net.Listen
 var _ = os.Exit
 
-func handleConnection(connection net.Conn){
+func handleConnection(connection net.Conn, redisStore map[string]string){
 	// cleaning resources after usage
 	defer connection.Close()
 
@@ -37,7 +37,18 @@ func handleConnection(connection net.Conn){
 			connection.Write([]byte("+PONG\r\n"))
 		case "ECHO" :
 			fmt.Fprintf(connection, "$%d\r\n%v\r\n", len(lines[4]),lines[4])
+		case "SET" :
+			redisStore[lines[4]] = lines[6]
+			connection.Write([]byte("+OK\r\n"))
+		case "GET" :
+			val, ok := redisStore[lines[4]]
+			if ok {
+				fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(val), val)
+			}else {
+				fmt.Fprintf(connection, "$-1\r\n")
+			}
 		}
+	
 	
 	}
 }
@@ -55,6 +66,9 @@ func main() {
 	}
 
 	defer l.Close()
+
+	var redisStore map[string]string
+	redisStore = make(map[string]string)
 	
 	for {
 		conn, err := l.Accept()
@@ -62,7 +76,8 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			continue
 		}
-		go handleConnection(conn)
+
+		go handleConnection(conn,redisStore)
 		
 	}
 
