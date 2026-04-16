@@ -5,20 +5,20 @@ import (
 	"io"
 	"net"
 	"os"
-
+	"strings"
 )
 
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
 var _ = net.Listen
 var _ = os.Exit
 
-func run(connection net.Conn){
+func handleConnection(connection net.Conn){
 	// cleaning resources after usage
 	defer connection.Close()
 
 	for {
 		buf := make([]byte,128)
-		_, err := connection.Read(buf)
+		n, err := connection.Read(buf)
 		
 		if(err != nil){
 			// EOF is returned by read when no more input is available
@@ -29,10 +29,14 @@ func run(connection net.Conn){
 			break
 		}
 		
-		_, err = connection.Write([]byte("+PONG\r\n"))
-		if err != nil {
-			fmt.Println("Error writing to connection: ", err.Error())
-			break
+		lines := strings.Split(string(buf[:n]), "\r\n")
+		fmt.Println("lines", lines)
+
+		switch strings.ToUpper(lines[2]){
+		case "PING":
+			connection.Write([]byte("+PONG\r\n"))
+		case "ECHO" :
+			fmt.Fprintf(connection, "$%d\r\n%v\r\n", len(lines[4]),lines[4])
 		}
 	
 	}
@@ -58,7 +62,7 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			continue
 		}
-		go run(conn)
+		go handleConnection(conn)
 		
 	}
 
