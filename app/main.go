@@ -135,17 +135,25 @@ func handleConnection(connection net.Conn){
 			}
 		case "LPUSH" :
 			key := lines[4]
-			existingArr, ok := redisStore[key].([]string)
-			if !ok{
-				existingArr = make([]string,0)
+			if existingArr, ok := redisStore[key]; ok {
+				arr := existingArr.([]string)
+				slices.Reverse(arr)
+				for i := 6; i < len(lines); i+=2 {
+					arr = append(arr, lines[i])
+				}
+				slices.Reverse(arr)
+				redisStore[key] = arr
+			}else{
+				redisStore[key] = make([]string,0)
+				arr := redisStore[key].([]string)
+				for i:=6; i < len(lines); i+=2 {
+					arr = append(arr, lines[i])
+				}
+				slices.Reverse(arr)
+				redisStore[key] = arr
 			}
-			slices.Reverse(existingArr)
-			for i := 6; i < len(lines); i+=2 {
-				existingArr = append(existingArr, lines[i])
-			}
-			slices.Reverse(redisStore[key].([]string))
-			redisStore[key] = existingArr
-			fmt.Fprintf(connection, ":%d\r\n", len(existingArr))
+			fmt.Fprintf(connection, ":%d\r\n", len(redisStore[key].([]string)))
+
 		}
 	
 	
