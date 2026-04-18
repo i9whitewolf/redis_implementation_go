@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -132,6 +133,19 @@ func handleConnection(connection net.Conn){
 			}else{
 				fmt.Fprintf(connection, "*0\r\n")
 			}
+		case "LPUSH" :
+			key := lines[4]
+			existingArr, ok := redisStore[key].([]string)
+			if !ok{
+				existingArr = make([]string,0)
+			}
+			slices.Reverse(existingArr)
+			for i := 6; i < len(lines); i+=2 {
+				existingArr = append(existingArr, lines[i])
+			}
+			slices.Reverse(redisStore[key].([]string))
+			redisStore[key] = existingArr
+			fmt.Fprintf(connection, ":%d\r\n", len(existingArr))
 		}
 	
 	
