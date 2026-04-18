@@ -96,23 +96,35 @@ func handleConnection(connection net.Conn){
 			fmt.Fprintf(connection, ":%d\r\n", len(redisStore[key].([]string)))
 		case "LRANGE" :
 			key := lines[4]
+			arr, ok := redisStore[key].([]string)
+			if !ok {
+				fmt.Fprintf(connection, "*0\r\n")
+				continue
+			}
+			n := len(arr)
 			start, err1 := strconv.Atoi(lines[6])
 			if err1 != nil {
 				fmt.Println("invalid start index: ", err1.Error())
 			}
+			if start < -n {
+				start = 0
+			}
+			start = (start%n + n)%n
 			end, err2 := strconv.Atoi(lines[8])
 			if err2 != nil {
 				fmt.Println("invalid end index: ", err2.Error())
 			}
+			if end > n-1 {
+				end = n-1
+			}
+			end = (end%n + n)%n
 			if existingArr, ok := redisStore[key]; ok {
 				arr := existingArr.([]string)
-				end = min(end, len(arr)-1)
 				if start > end || start >= len(arr) {
 					fmt.Fprintf(connection, "*0\r\n")
 				}else{
 					fmt.Fprintf(connection, "*%d\r\n", end-start+1)
 					for i := start; i <= end; i++ {
-						// fmt.Printf("starting index: %d, ending index: %d, current index: %d, key: %s, value : %s\n", start, end, i, key, arr[i])
 						fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(arr[i]), arr[i])
 					}
 				}
