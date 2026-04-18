@@ -80,10 +80,13 @@ func handleConnection(connection net.Conn){
 		case "RPUSH" :
 			key := lines[4]
 			value := lines[6]
-			if existingVal, ok := redisStore[key]; ok {
-				redisStore[key] = append(existingVal.([]string), value)
-			}else{
-				redisStore[key] = []string{value}
+			for  i := 6; i < len(lines); i+=2{
+
+				if existingVal, ok := redisStore[key]; ok {
+					redisStore[key] = append(existingVal.([]string), value)
+				}else{
+						redisStore[key] = []string{value}
+				}
 			}
 			fmt.Fprintf(connection, ":%d\r\n", len(redisStore[key].([]string)))
 		}
