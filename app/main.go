@@ -79,16 +79,47 @@ func handleConnection(connection net.Conn){
 			}
 		case "RPUSH" :
 			key := lines[4]
-			value := lines[6]
-			for  i := 6; i < len(lines); i+=2{
-
-				if existingVal, ok := redisStore[key]; ok {
-					redisStore[key] = append(existingVal.([]string), value)
-				}else{
-						redisStore[key] = []string{value}
+			if existingArr, ok := redisStore[key]; ok {
+				arr := existingArr.([]string)
+				for i := 6; i < len(lines); i+=2 {
+					arr = append(arr, lines[i])
 				}
+				redisStore[key] = arr
+			}else{
+				redisStore[key] = make([]string,0)
+				arr := redisStore[key].([]string)
+				for i := 6; i < len(lines); i+=2 {
+					arr = append(arr, lines[i])
+				}
+				redisStore[key] = arr
 			}
 			fmt.Fprintf(connection, ":%d\r\n", len(redisStore[key].([]string)))
+		case "LRANGE" :
+			key := lines[4]
+			start, err1 := strconv.Atoi(lines[6])
+			if err1 != nil {
+				fmt.Println("invalid start index: ", err1.Error())
+			}
+			end, err2 := strconv.Atoi(lines[8])
+			if err2 != nil {
+				fmt.Println("invalid end index: ", err2.Error())
+			}
+			if existingArr, ok := redisStore[key]; ok {
+				arr := existingArr.([]string)
+				end = min(end, len(arr)-1)
+				if start > end || start >= len(arr) {
+					fmt.Fprintf(connection, "*0\r\n")
+				}else{
+					fmt.Fprintf(connection, "*%d\r\n", end-start+1)
+					for i := start; i <= end; i++ {
+						// fmt.Printf("starting index: %d, ending index: %d, current index: %d, key: %s, value : %s\n", start, end, i, key, arr[i])
+						fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(arr[i]), arr[i])
+					}
+				}
+
+			}else{
+				fmt.Fprintf(connection, "*0\r\n")
+			}
 		}
 	
 	
