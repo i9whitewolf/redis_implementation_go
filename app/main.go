@@ -14,9 +14,11 @@ import (
 var _ = net.Listen
 var _ = os.Exit
 
-func handleConnection(connection net.Conn, redisStore map[string]string){
+func handleConnection(connection net.Conn){
 	// cleaning resources after usage
 	defer connection.Close()
+
+	redisStore := make(map[string]any)
 
 	for {
 		buf := make([]byte,4096)
@@ -71,10 +73,19 @@ func handleConnection(connection net.Conn, redisStore map[string]string){
 		case "GET" :
 			val, ok := redisStore[lines[4]]
 			if ok {
-				fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(val), val)
+				fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(val.(string)), val)
 			}else {
 				fmt.Fprintf(connection, "$-1\r\n")
 			}
+		case "RPUSH" :
+			key := lines[4]
+			value := lines[6]
+			if existingVal, ok := redisStore[key]; ok {
+				redisStore[key] = append(existingVal.([]string), value)
+			}else{
+				redisStore[key] = []string{value}
+			}
+			fmt.Fprintf(connection, ":%d\r\n", len(redisStore[key].([]string)))
 		}
 	
 	
@@ -94,9 +105,6 @@ func main() {
 	}
 
 	defer l.Close()
-
-	var redisStore map[string]string
-	redisStore = make(map[string]string)
 	
 	for {
 		conn, err := l.Accept()
@@ -105,7 +113,7 @@ func main() {
 			continue
 		}
 
-		go handleConnection(conn,redisStore)
+		go handleConnection(conn)
 		
 	}
 
