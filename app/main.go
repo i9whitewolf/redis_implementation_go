@@ -167,8 +167,27 @@ func handleConnection(connection net.Conn){
 			if !ok {
 				fmt.Fprintf(connection, "$-1\r\n")
 			}else{
-				fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(arr.([]string)[0]), arr.([]string)[0])
-				redisStore[key] = arr.([]string)[1:]
+				argCount ,err := strconv.Atoi(lines[0][1:])
+				if err != nil{
+					fmt.Println("error converting string to int using Atoi", err.Error())
+				}
+
+				if argCount > 2{
+					count, err := strconv.Atoi(lines[6])
+					if err != nil {
+						fmt.Println("invalid count value: ", err.Error())
+						continue
+					}
+					count = min(count, len(arr.([]string)))
+					fmt.Fprintf(connection, "*%d\r\n", count)
+					for i := 0; i < count; i++ {
+						fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(arr.([]string)[i]), arr.([]string)[i])
+					}
+					redisStore[key] = arr.([]string)[count:]
+				}else{
+					fmt.Fprintf(connection, "$%d\r\n%s\r\n", len(arr.([]string)[0]), arr.([]string)[0])
+					redisStore[key] = arr.([]string)[1:]
+				}
 			}
 		}
 	
