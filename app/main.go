@@ -153,6 +153,14 @@ func handleConnection(connection net.Conn){
 				redisStore[key] = arr
 			}
 			fmt.Fprintf(connection, ":%d\r\n", len(redisStore[key].([]string)))
+		case "LLEN" :
+			key := lines[4]
+			arr, ok := redisStore[key]
+			if !ok {
+				fmt.Fprintf(connection, ":0\r\n")
+			} else{
+				fmt.Fprintf(connection, ":%d\r\n", len(arr.([]string)))
+			}
 
 		}
 	
