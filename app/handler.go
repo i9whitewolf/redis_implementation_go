@@ -189,11 +189,14 @@ func handleIncr(db *store.Store, cmd Command) []byte {
 	key := cmd.Args[1]
 
 	val, ok := db.StringGet(key)
-	if currVal, ok2 := strconv.Atoi(val); ok && ok2 == nil {
-		val = strconv.Itoa(currVal + 1)
-		db.StringSet(key,val,time.Time{})
-		return EncodeInteger(currVal + 1)
+	if ok {
+		if currVal, ok2 := strconv.Atoi(val); ok2 == nil {
+			val = strconv.Itoa(currVal + 1)
+			db.StringSet(key,val,time.Time{})
+			return EncodeInteger(currVal + 1)
+		}
+	}else{
+		db.StringSet(key,"1",time.Time{})
 	}
-	return EncodeNull()
-
+	return EncodeInteger(1)
 }
