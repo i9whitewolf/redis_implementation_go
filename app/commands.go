@@ -16,4 +16,5 @@ var minArgs = map[string]int{
 	"LLEN":   2,
 	"LPOP":   2,
 	"BLPOP":  3,
+	"INCR":   2,
 }

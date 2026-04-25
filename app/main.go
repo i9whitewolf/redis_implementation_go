@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+
+	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
+
+// db is the single shared store instance for this server.
+var db = store.NewStore()
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -38,7 +43,7 @@ func handleConnection(conn net.Conn) {
 		}
 		fmt.Println("Received command: ", cmd.Name(), cmd.Args)
 
-		response := handleCommand(cmd)
+		response := handleCommand(db, cmd)
 		conn.Write(response)
 	}
 }

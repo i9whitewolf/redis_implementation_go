@@ -9,7 +9,8 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
-func handleCommand(cmd Command) []byte {
+
+func handleCommand(db *store.Store, cmd Command) []byte {
 	name := strings.ToUpper(cmd.Name())
 
 	if min, ok := minArgs[name]; ok && len(cmd.Args) < min {
@@ -22,21 +23,23 @@ func handleCommand(cmd Command) []byte {
 	case "ECHO":
 		return handleEcho(cmd)
 	case "GET":
-		return handleGet(cmd)
+		return handleGet(db, cmd)
 	case "SET":
-		return handleSet(cmd)
+		return handleSet(db, cmd)
 	case "RPUSH":
-		return handleRPush(cmd)
+		return handleRPush(db, cmd)
 	case "LPUSH":
-		return handleLPush(cmd)
+		return handleLPush(db, cmd)
 	case "LRANGE":
-		return handleLRange(cmd)
+		return handleLRange(db, cmd)
 	case "LLEN":
-		return handleLLen(cmd)
+		return handleLLen(db, cmd)
 	case "LPOP":
-		return handleLPop(cmd)
+		return handleLPop(db, cmd)
 	case "BLPOP":
-		return handleBLPop(cmd)
+		return handleBLPop(db, cmd)
+	case "INCR":
+		return handleIncr(db,cmd)
 	default:
 		return []byte("-ERR unknown command\r\n")
 	}
@@ -50,15 +53,15 @@ func handleEcho(cmd Command) []byte {
 	return EncodeBulkString(cmd.Args[1])
 }
 
-func handleGet(cmd Command) []byte {
-	value, ok := store.StringGet(cmd.Args[1])
+func handleGet(db *store.Store, cmd Command) []byte {
+	value, ok := db.StringGet(cmd.Args[1])
 	if !ok {
 		return EncodeNull()
 	}
 	return EncodeBulkString(value)
 }
 
-func handleSet(cmd Command) []byte {
+func handleSet(db *store.Store, cmd Command) []byte {
 
 	var expiresAt time.Time
 
@@ -82,29 +85,29 @@ func handleSet(cmd Command) []byte {
 		}
 	}
 
-	if err := store.StringSet(cmd.Args[1], cmd.Args[2], expiresAt); err != nil {
+	if err := db.StringSet(cmd.Args[1], cmd.Args[2], expiresAt); err != nil {
 		return []byte("-" + err.Error() + "\r\n")
 	}
 	return EncodeSimpleString("OK")
 }
 
-func handleRPush(cmd Command) []byte {
-	if err := store.ListPush(cmd.Args[1], cmd.Args[2:]...); err != nil {
+func handleRPush(db *store.Store, cmd Command) []byte {
+	n, err := db.ListPush(cmd.Args[1], cmd.Args[2:]...)
+	if err != nil {
 		return []byte("-" + err.Error() + "\r\n")
 	}
-	values, _ := store.ListGet(cmd.Args[1])
-	return EncodeInteger(len(values))
+	return EncodeInteger(n)
 }
 
-func handleLPush(cmd Command) []byte {
-	if err := store.ListLPush(cmd.Args[1], cmd.Args[2:]...); err != nil {
+func handleLPush(db *store.Store, cmd Command) []byte {
+	n, err := db.ListLPush(cmd.Args[1], cmd.Args[2:]...)
+	if err != nil {
 		return []byte("-" + err.Error() + "\r\n")
 	}
-	values, _ := store.ListGet(cmd.Args[1])
-	return EncodeInteger(len(values))
+	return EncodeInteger(n)
 }
 
-func handleLRange(cmd Command) []byte {
+func handleLRange(db *store.Store, cmd Command) []byte {
 	start, err := strconv.Atoi(cmd.Args[2])
 	if err != nil {
 		return []byte("-ERR value is not an integer or out of range\r\n")
@@ -113,16 +116,16 @@ func handleLRange(cmd Command) []byte {
 	if err != nil {
 		return []byte("-ERR value is not an integer or out of range\r\n")
 	}
-	values, _ := store.ListRange(cmd.Args[1], start, stop)
+	values, _ := db.ListRange(cmd.Args[1], start, stop)
 	return EncodeArray(values)
 }
 
-func handleLLen(cmd Command) []byte {
-	values, _ := store.ListGet(cmd.Args[1])
+func handleLLen(db *store.Store, cmd Command) []byte {
+	values, _ := db.ListGet(cmd.Args[1])
 	return EncodeInteger(len(values))
 }
 
-func handleLPop(cmd Command) []byte {
+func handleLPop(db *store.Store, cmd Command) []byte {
 	count := 1
 	hasCount := false
 	if len(cmd.Args) > 2 {
@@ -133,7 +136,7 @@ func handleLPop(cmd Command) []byte {
 		count = c
 		hasCount = true
 	}
-	values, ok := store.ListPop(cmd.Args[1], count)
+	values, ok := db.ListPop(cmd.Args[1], count)
 	if !ok {
 		return EncodeNull()
 	}
@@ -143,23 +146,54 @@ func handleLPop(cmd Command) []byte {
 	return EncodeArray(values)
 }
 
-func handleBLPop(cmd Command) []byte {
+func handleBLPop(db *store.Store, cmd Command) []byte {
+	key := cmd.Args[1]
+
 	var timeout float64
 	if len(cmd.Args) > 2 {
-		t, err := strconv.ParseFloat(cmd.Args[2], 64)
+		t, err := strconv.ParseFloat(cmd.Args[len(cmd.Args)-1], 64)
 		if err != nil {
 			return []byte("-ERR value is not an integer or out of range\r\n")
 		}
 		timeout = t
 	}
-	deadline := time.Now().Add(time.Duration(timeout*float64(time.Second)))
-	for timeout == 0 || time.Now().Before(deadline) {
-		values, ok := store.ListPop(cmd.Args[1], 1)
-		if ok {
-			time.Sleep(time.Duration(timeout) * time.Second)
-			return EncodeArray([]string{cmd.Args[1], values[0]})
-		}
-		time.Sleep(50 * time.Millisecond)
+
+	// Atomically: pop immediately if the list is non-empty, OR register as a
+	// waiter. No polling loop, no race between the check and the registration.
+	value, ok, ch := db.ListPopOrWait(key)
+	if ok {
+		return EncodeArray([]string{key, value})
 	}
-	return EncodeNullArray()
+
+	// List was empty — ch is now registered. Clean it up when we return.
+	defer db.ListRemoveWaiter(key, ch)
+
+	if timeout == 0 {
+		// Block indefinitely until a push wakes us.
+		value = <-ch
+		return EncodeArray([]string{key, value})
+	}
+
+	timer := time.NewTimer(time.Duration(timeout * float64(time.Second)))
+	defer timer.Stop()
+
+	select {
+	case value = <-ch:
+		return EncodeArray([]string{key, value})
+	case <-timer.C:
+		return EncodeNullArray()
+	}
+}
+
+func handleIncr(db *store.Store, cmd Command) []byte {
+	key := cmd.Args[1]
+
+	val, ok := db.StringGet(key)
+	if currVal, ok2 := strconv.Atoi(val); ok && ok2 == nil {
+		val = strconv.Itoa(currVal + 1)
+		db.StringSet(key,val,time.Time{})
+		return EncodeInteger(currVal + 1)
+	}
+	return EncodeNull()
+
 }
