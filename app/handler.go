@@ -144,15 +144,15 @@ func handleLPop(cmd Command) []byte {
 }
 
 func handleBLPop(cmd Command) []byte {
-	timeout := 0
+	var timeout float64
 	if len(cmd.Args) > 2 {
-		t, err := strconv.Atoi(cmd.Args[2])
+		t, err := strconv.ParseFloat(cmd.Args[2], 64)
 		if err != nil {
 			return []byte("-ERR value is not an integer or out of range\r\n")
 		}
 		timeout = t
 	}
-	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	deadline := time.Now().Add(time.Duration(timeout*float64(time.Second)))
 	for timeout == 0 || time.Now().Before(deadline) {
 		values, ok := store.ListPop(cmd.Args[1], 1)
 		if ok {
@@ -161,5 +161,5 @@ func handleBLPop(cmd Command) []byte {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return EncodeNull()
+	return EncodeNullArray()
 }

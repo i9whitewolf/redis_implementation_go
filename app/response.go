@@ -27,3 +27,7 @@ func EncodeArray(items []string) []byte {
 	}
 	return result
 }
+
+func EncodeNullArray() []byte {
+	return []byte("*-1\r\n")
+}
