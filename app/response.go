@@ -31,3 +31,7 @@ func EncodeArray(items []string) []byte {
 func EncodeNullArray() []byte {
 	return []byte("*-1\r\n")
 }
+
+func EncodeError(msg string) []byte {
+	return []byte(fmt.Sprintf("-%s\r\n",msg))
+}

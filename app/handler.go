@@ -194,6 +194,8 @@ func handleIncr(db *store.Store, cmd Command) []byte {
 			val = strconv.Itoa(currVal + 1)
 			db.StringSet(key,val,time.Time{})
 			return EncodeInteger(currVal + 1)
+		}else{
+			return EncodeError("ERR value is not an integer or out of range")
 		}
 	}else{
 		db.StringSet(key,"1",time.Time{})
