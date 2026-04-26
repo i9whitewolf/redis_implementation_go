@@ -2,8 +2,8 @@ package store
 
 import (
 	"fmt"
-	"time"
 	"sync"
+	"time"
 )
 
 // KeyType is the Redis data type for a key.
@@ -46,6 +46,7 @@ type Store struct {
 	stringDict map[string]stringEntry
 	listDict   map[string]listEntry
 	versions   map[string]uint64 // incremented on every write; used by WATCH
+	streamDict map[string]string
 }
 
 // NewStore creates and returns an initialised Store.
@@ -55,6 +56,7 @@ func NewStore() *Store {
 		stringDict: make(map[string]stringEntry),
 		listDict:   make(map[string]listEntry),
 		versions:   make(map[string]uint64),
+		streamDict: make(map[string]string),
 	}
 }
 
@@ -358,4 +360,13 @@ func (s *Store) ListRange(key string, start, stop int) ([]string, bool) {
 	}
 
 	return e.values[start : stop+1], true
+}
+
+func (s *Store) StreamAdd(key, rawID string, fields []string) (error){
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamDict[key] = "temp"
+	s.keyTypes[key] = KeyTypeStream
+	s.incrementVersionLocked(key)
+	return nil
 }

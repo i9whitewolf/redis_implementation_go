@@ -18,4 +18,7 @@ var minArgs = map[string]int{
 	"BLPOP":  3,
 	"INCR":   2,
 	"TYPE":   2,
+	
+	//streams
+	"XADD": 5,
 }

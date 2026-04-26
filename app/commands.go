@@ -9,7 +9,6 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
-
 func handleCommand(db *store.Store, cmd Command) []byte {
 	name := strings.ToUpper(cmd.Name())
 
@@ -39,9 +38,11 @@ func handleCommand(db *store.Store, cmd Command) []byte {
 	case "BLPOP":
 		return handleBLPop(db, cmd)
 	case "INCR":
-		return handleIncr(db,cmd)
+		return handleIncr(db, cmd)
 	case "TYPE":
-		return handleType(db,cmd)
+		return handleType(db, cmd)
+	case "XADD":
+		return handleXAdd(db, cmd)
 	default:
 		return []byte("-ERR unknown command\r\n")
 	}
@@ -212,4 +213,14 @@ func handleIncr(db *store.Store, cmd Command) []byte {
 func handleType(db *store.Store, cmd Command) []byte {
 	key := cmd.Args[1]
 	return EncodeSimpleString(db.GetTypeName(key))
+}
+
+func handleXAdd(db *store.Store, cmd Command) []byte {
+	key := cmd.Args[1]
+	rawId := cmd.Args[2]
+	fields := cmd.Args[3:]
+
+	db.StreamAdd(key, rawId, fields)
+
+	return EncodeBulkString(rawId)
 }
