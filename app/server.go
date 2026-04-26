@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// Session holds per-connection transaction state for MULTI/EXEC.
+// Session holds per-connection state: MULTI/EXEC transaction queue and WATCH snapshots.
 type Session struct {
-	inMulti bool
-	queue   []Command
+	inMulti        bool
+	queue          []Command
+	watchedVersions map[string]uint64 // key → version at WATCH time; nil means nothing watched
 }
 
 func handleConnection(conn net.Conn) {
@@ -41,6 +42,23 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 			session.inMulti = false
+
+			// If any watched key was modified since WATCH, abort the transaction.
+			aborted := false
+			for key, ver := range session.watchedVersions {
+				if db.GetVersion(key) != ver {
+					aborted = true
+					break
+				}
+			}
+			session.watchedVersions = nil // unwatch after EXEC regardless
+
+			if aborted {
+				session.queue = nil
+				conn.Write(EncodeNullArray()) // signal to client: transaction aborted
+				continue
+			}
+
 			// Execute every queued command and collect their responses.
 			results := make([][]byte, len(session.queue))
 			for i, qcmd := range session.queue {
@@ -55,8 +73,27 @@ func handleConnection(conn net.Conn) {
 			} else {
 				session.inMulti = false
 				session.queue = nil
+				session.watchedVersions = nil // unwatch on DISCARD too
 				conn.Write(EncodeSimpleString("OK"))
 			}
+
+		case "WATCH":
+			if session.inMulti {
+				conn.Write(EncodeError("ERR WATCH inside MULTI is not allowed"))
+				continue
+			}
+			// Snapshot the current version of each key to watch.
+			if session.watchedVersions == nil {
+				session.watchedVersions = make(map[string]uint64)
+			}
+			for _, key := range cmd.Args[1:] {
+				session.watchedVersions[key] = db.GetVersion(key)
+			}
+			conn.Write(EncodeSimpleString("OK"))
+
+		case "UNWATCH":
+			session.watchedVersions = nil
+			conn.Write(EncodeSimpleString("OK"))
 
 		default:
 			if session.inMulti {

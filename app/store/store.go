@@ -36,6 +36,7 @@ type Store struct {
 	keyTypes   map[string]keyType
 	stringDict map[string]stringEntry
 	listDict   map[string]listEntry
+	versions   map[string]uint64 // incremented on every write; used by WATCH
 }
 
 // NewStore creates and returns an initialised Store.
@@ -44,7 +45,21 @@ func NewStore() *Store {
 		keyTypes:   make(map[string]keyType),
 		stringDict: make(map[string]stringEntry),
 		listDict:   make(map[string]listEntry),
+		versions:   make(map[string]uint64),
 	}
+}
+
+// GetVersion returns the current write version for key.
+// A WATCH snapshot taken before a write will differ after the write.
+func (s *Store) GetVersion(key string) uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.versions[key]
+}
+
+// incrementVersionLocked bumps the version for key. Caller must hold mu.Lock().
+func (s *Store) incrementVersionLocked(key string) {
+	s.versions[key]++
 }
 
 // checkType must be called with at least a read lock already held by the caller.
@@ -66,6 +81,7 @@ func (s *Store) StringSet(key, value string, expiresAt time.Time) error {
 	}
 	s.stringDict[key] = stringEntry{expiry: expiry{expiresAt: expiresAt}, value: value}
 	s.keyTypes[key] = typeString
+	s.incrementVersionLocked(key)
 	return nil
 }
 
@@ -95,6 +111,7 @@ func (s *Store) StringDelete(key string) {
 func (s *Store) stringDeleteLocked(key string) {
 	delete(s.stringDict, key)
 	delete(s.keyTypes, key)
+	s.incrementVersionLocked(key)
 }
 
 // List operations
@@ -128,6 +145,7 @@ func (s *Store) ListLPush(key string, values ...string) (int, error) {
 	}
 	s.listDict[key] = e
 	s.keyTypes[key] = typeList
+	s.incrementVersionLocked(key)
 	newLen := len(e.values)
 
 	// Wake up one BLPOP waiter per pushed value (they pop from the list).
@@ -151,6 +169,7 @@ func (s *Store) ListPush(key string, values ...string) (int, error) {
 	e.values = append(e.values, values...)
 	s.listDict[key] = e
 	s.keyTypes[key] = typeList
+	s.incrementVersionLocked(key)
 	newLen := len(e.values)
 
 	// Wake up one BLPOP waiter per pushed value (they pop from the list).
@@ -184,6 +203,7 @@ func (s *Store) ListPop(key string, count int) ([]string, bool) {
 	copy(popped, e.values[:count])
 	e.values = e.values[count:]
 	s.listDict[key] = e
+	s.incrementVersionLocked(key)
 	return popped, true
 }
 
@@ -213,6 +233,7 @@ func (s *Store) ListDelete(key string) {
 func (s *Store) listDeleteLocked(key string) {
 	delete(s.listDict, key)
 	delete(s.keyTypes, key)
+	s.incrementVersionLocked(key)
 }
 
 // notifyWaiterFromListLocked pops the head of the list and sends it to the first
