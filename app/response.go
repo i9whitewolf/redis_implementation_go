@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+)
 
 var Pong = []byte("+PONG\r\n")
 
@@ -33,5 +36,16 @@ func EncodeNullArray() []byte {
 }
 
 func EncodeError(msg string) []byte {
-	return []byte(fmt.Sprintf("-%s\r\n",msg))
+	return []byte(fmt.Sprintf("-%s\r\n", msg))
+}
+
+// EncodeRawArray wraps already-encoded RESP values into a RESP array.
+// Used by EXEC to bundle individual command responses.
+func EncodeRawArray(items [][]byte) []byte {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "*%d\r\n", len(items))
+	for _, item := range items {
+		buf.Write(item)
+	}
+	return buf.Bytes()
 }

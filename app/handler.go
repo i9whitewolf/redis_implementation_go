@@ -188,17 +188,21 @@ func handleBLPop(db *store.Store, cmd Command) []byte {
 func handleIncr(db *store.Store, cmd Command) []byte {
 	key := cmd.Args[1]
 
-	val, ok := db.StringGet(key)
-	if ok {
-		if currVal, ok2 := strconv.Atoi(val); ok2 == nil {
-			val = strconv.Itoa(currVal + 1)
-			db.StringSet(key,val,time.Time{})
-			return EncodeInteger(currVal + 1)
-		}else{
+	var n int
+
+	// If the key exists, it must hold a valid integer.
+	if val, exists := db.StringGet(key); exists {
+		var err error
+		n, err = strconv.Atoi(val)
+		if err != nil {
 			return EncodeError("ERR value is not an integer or out of range")
 		}
-	}else{
-		db.StringSet(key,"1",time.Time{})
 	}
-	return EncodeInteger(1)
+	// Key absent → n stays 0, so n++ gives 1 (Redis default).
+
+	n++
+	if err := db.StringSet(key, strconv.Itoa(n), time.Time{}); err != nil {
+		return EncodeError(err.Error())
+	}
+	return EncodeInteger(n)
 }
