@@ -414,7 +414,7 @@ func resolveStreamID(rawID string, lastMs, lastSeq uint64, hasEntries bool) (ms,
 		if ms == lastMs && hasEntries {
 			seq = lastSeq + 1
 		} else {
-			seq = 0
+			seq = 1
 		}
 		return ms, seq, nil
 	}
@@ -431,14 +431,14 @@ func resolveStreamID(rawID string, lastMs, lastSeq uint64, hasEntries bool) (ms,
 
 	if parts[1] == "*" {
 		// ms given, auto-generate sequence
-		if hasEntries {
-			if ms < lastMs {
-				return 0, 0, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-			}
-			if ms == lastMs {
-				seq = lastSeq + 1
-			} // else ms > lastMs → seq stays 0
-		} // else stream is empty → seq stays 0
+
+		if ms < lastMs {
+			return 0, 0, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+		}
+		if ms == lastMs {
+			seq = lastSeq + 1
+		} // else ms > lastMs → seq stays 0
+		// else stream is empty → seq stays 0
 		return ms, seq, nil
 	}
 
