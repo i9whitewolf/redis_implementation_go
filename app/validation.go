@@ -17,4 +17,5 @@ var minArgs = map[string]int{
 	"LPOP":   2,
 	"BLPOP":  3,
 	"INCR":   2,
+	"TYPE":   2,
 }

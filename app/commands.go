@@ -40,6 +40,8 @@ func handleCommand(db *store.Store, cmd Command) []byte {
 		return handleBLPop(db, cmd)
 	case "INCR":
 		return handleIncr(db,cmd)
+	case "TYPE":
+		return handleType(db,cmd)
 	default:
 		return []byte("-ERR unknown command\r\n")
 	}
@@ -205,4 +207,9 @@ func handleIncr(db *store.Store, cmd Command) []byte {
 		return EncodeError(err.Error())
 	}
 	return EncodeInteger(n)
+}
+
+func handleType(db *store.Store, cmd Command) []byte {
+	key := cmd.Args[1]
+	return EncodeSimpleString(db.GetTypeName(key))
 }

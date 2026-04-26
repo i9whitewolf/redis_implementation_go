@@ -6,11 +6,19 @@ import (
 	"sync"
 )
 
-type keyType int
+// KeyType is the Redis data type for a key.
+// Using a string-backed type means the constant value IS the wire format —
+// no translation needed, no iota fragility, and it's exported for cross-package use.
+type KeyType string
 
 const (
-	typeString keyType = iota
-	typeList keyType = 1
+	KeyTypeNone      KeyType = "none"
+	KeyTypeString    KeyType = "string"
+	KeyTypeList      KeyType = "list"
+	KeyTypeHash      KeyType = "hash"
+	KeyTypeZSet      KeyType = "zset"
+	KeyTypeStream    KeyType = "stream"
+	KeyTypeVectorSet KeyType = "vectorset"
 )
 
 type expiry struct {
@@ -31,9 +39,10 @@ type listEntry struct {
 	values  []string
 	waiters []chan string // BLPOP clients waiting for a value
 }
+
 type Store struct {
 	mu         sync.RWMutex
-	keyTypes   map[string]keyType
+	keyTypes   map[string]KeyType
 	stringDict map[string]stringEntry
 	listDict   map[string]listEntry
 	versions   map[string]uint64 // incremented on every write; used by WATCH
@@ -42,7 +51,7 @@ type Store struct {
 // NewStore creates and returns an initialised Store.
 func NewStore() *Store {
 	return &Store{
-		keyTypes:   make(map[string]keyType),
+		keyTypes:   make(map[string]KeyType),
 		stringDict: make(map[string]stringEntry),
 		listDict:   make(map[string]listEntry),
 		versions:   make(map[string]uint64),
@@ -57,13 +66,24 @@ func (s *Store) GetVersion(key string) uint64 {
 	return s.versions[key]
 }
 
+// GetTypeName returns the Redis type name for the key (e.g. "string", "list", "none").
+// Because KeyType values ARE the wire-format strings, this is just a map lookup.
+func (s *Store) GetTypeName(key string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if t, ok := s.keyTypes[key]; ok {
+		return string(t)
+	}
+	return string(KeyTypeNone)
+}
+
 // incrementVersionLocked bumps the version for key. Caller must hold mu.Lock().
 func (s *Store) incrementVersionLocked(key string) {
 	s.versions[key]++
 }
 
 // checkType must be called with at least a read lock already held by the caller.
-func (s *Store) checkType(key string, expected keyType) error {
+func (s *Store) checkType(key string, expected KeyType) error {
 	if t, ok := s.keyTypes[key]; ok && t != expected {
 		return fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
@@ -76,11 +96,11 @@ func (s *Store) StringSet(key, value string, expiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.checkType(key, typeString); err != nil {
+	if err := s.checkType(key, KeyTypeString); err != nil {
 		return err
 	}
 	s.stringDict[key] = stringEntry{expiry: expiry{expiresAt: expiresAt}, value: value}
-	s.keyTypes[key] = typeString
+	s.keyTypes[key] = KeyTypeString
 	s.incrementVersionLocked(key)
 	return nil
 }
@@ -135,7 +155,7 @@ func (s *Store) ListLPush(key string, values ...string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.checkType(key, typeList); err != nil {
+	if err := s.checkType(key, KeyTypeList); err != nil {
 		return 0, err
 	}
 	// Push all values into the list first so the length is correct.
@@ -144,7 +164,7 @@ func (s *Store) ListLPush(key string, values ...string) (int, error) {
 		e.values = append([]string{v}, e.values...)
 	}
 	s.listDict[key] = e
-	s.keyTypes[key] = typeList
+	s.keyTypes[key] = KeyTypeList
 	s.incrementVersionLocked(key)
 	newLen := len(e.values)
 
@@ -161,14 +181,14 @@ func (s *Store) ListPush(key string, values ...string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.checkType(key, typeList); err != nil {
+	if err := s.checkType(key, KeyTypeList); err != nil {
 		return 0, err
 	}
 	// Push all values into the list first so the length is correct.
 	e := s.listDict[key]
 	e.values = append(e.values, values...)
 	s.listDict[key] = e
-	s.keyTypes[key] = typeList
+	s.keyTypes[key] = KeyTypeList
 	s.incrementVersionLocked(key)
 	newLen := len(e.values)
 
@@ -276,7 +296,7 @@ func (s *Store) ListPopOrWait(key string) (string, bool, chan string) {
 	if !ok {
 		// Key doesn't exist yet; create a skeleton entry so waiters are stored.
 		e = listEntry{}
-		s.keyTypes[key] = typeList
+		s.keyTypes[key] = KeyTypeList
 	}
 	e.waiters = append(e.waiters, ch)
 	s.listDict[key] = e
