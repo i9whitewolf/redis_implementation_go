@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -40,13 +42,26 @@ type listEntry struct {
 	waiters []chan string // BLPOP clients waiting for a value
 }
 
+// StreamRecord is a single entry inside a Redis stream.
+type StreamRecord struct {
+	ID     string
+	Fields []string // flat [field, value, field, value, ...]
+}
+
+type streamData struct {
+	expiry
+	entries []StreamRecord
+	lastMs  uint64 // milliseconds part of the last inserted ID
+	lastSeq uint64 // sequence part of the last inserted ID
+}
+
 type Store struct {
 	mu         sync.RWMutex
 	keyTypes   map[string]KeyType
 	stringDict map[string]stringEntry
 	listDict   map[string]listEntry
+	streamDict map[string]streamData
 	versions   map[string]uint64 // incremented on every write; used by WATCH
-	streamDict map[string]string
 }
 
 // NewStore creates and returns an initialised Store.
@@ -55,8 +70,8 @@ func NewStore() *Store {
 		keyTypes:   make(map[string]KeyType),
 		stringDict: make(map[string]stringEntry),
 		listDict:   make(map[string]listEntry),
+		streamDict: make(map[string]streamData),
 		versions:   make(map[string]uint64),
-		streamDict: make(map[string]string),
 	}
 }
 
@@ -362,11 +377,81 @@ func (s *Store) ListRange(key string, start, stop int) ([]string, bool) {
 	return e.values[start : stop+1], true
 }
 
-func (s *Store) StreamAdd(key, rawID string, fields []string) (error){
+func (s *Store) StreamAdd(key, rawID string, fields []string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.streamDict[key] = "temp"
+
+	if err := s.checkType(key, KeyTypeStream); err != nil {
+		return "", err
+	}
+
+	sd := s.streamDict[key]
+	ms, seq, err := resolveStreamID(rawID, sd.lastMs, sd.lastSeq, len(sd.entries) > 0)
+	if err != nil {
+		return "", err
+	}
+
+	id := fmt.Sprintf("%d-%d", ms, seq)
+	sd.entries = append(sd.entries, StreamRecord{ID: id, Fields: fields})
+	sd.lastMs = ms
+	sd.lastSeq = seq
+	s.streamDict[key] = sd
 	s.keyTypes[key] = KeyTypeStream
 	s.incrementVersionLocked(key)
-	return nil
+	return id, nil
+}
+
+// resolveStreamID parses or generates the (ms, seq) parts of a stream entry ID.
+// It is a package-level helper so it stays pure and independently testable.
+func resolveStreamID(rawID string, lastMs, lastSeq uint64, hasEntries bool) (ms, seq uint64, err error) {
+	now := uint64(time.Now().UnixMilli())
+
+	if rawID == "*" {
+		ms = now
+		if ms < lastMs {
+			ms = lastMs // clock went backwards — clamp to last
+		}
+		if ms == lastMs && hasEntries {
+			seq = lastSeq + 1
+		} else {
+			seq = 0
+		}
+		return ms, seq, nil
+	}
+
+	parts := strings.SplitN(rawID, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("ERR Invalid stream ID specified as stream command argument")
+	}
+
+	ms, err = strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ERR Invalid stream ID specified as stream command argument")
+	}
+
+	if parts[1] == "*" {
+		// ms given, auto-generate sequence
+		if hasEntries {
+			if ms < lastMs {
+				return 0, 0, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+			}
+			if ms == lastMs {
+				seq = lastSeq + 1
+			} // else ms > lastMs → seq stays 0
+		} // else stream is empty → seq stays 0
+		return ms, seq, nil
+	}
+
+	// Fully explicit ID
+	seq, err = strconv.ParseUint(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ERR Invalid stream ID specified as stream command argument")
+	}
+	if ms == 0 && seq == 0 {
+		return 0, 0, fmt.Errorf("ERR The ID specified in XADD must be greater than 0-0")
+	}
+	if hasEntries && (ms < lastMs || (ms == lastMs && seq <= lastSeq)) {
+		return 0, 0, fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+	}
+	return ms, seq, nil
 }

@@ -217,10 +217,17 @@ func handleType(db *store.Store, cmd Command) []byte {
 
 func handleXAdd(db *store.Store, cmd Command) []byte {
 	key := cmd.Args[1]
-	rawId := cmd.Args[2]
+	rawID := cmd.Args[2]
 	fields := cmd.Args[3:]
 
-	db.StreamAdd(key, rawId, fields)
+	// fields must come in pairs: field value [field value ...]
+	if len(fields) == 0 || len(fields)%2 != 0 {
+		return EncodeError("ERR wrong number of arguments for 'xadd' command")
+	}
 
-	return EncodeBulkString(rawId)
+	id, err := db.StreamAdd(key, rawID, fields)
+	if err != nil {
+		return EncodeError(err.Error())
+	}
+	return EncodeBulkString(id) // return the GENERATED id, not the raw input
 }
