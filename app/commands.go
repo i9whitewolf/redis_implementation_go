@@ -43,6 +43,8 @@ func handleCommand(db *store.Store, cmd Command) []byte {
 		return handleType(db, cmd)
 	case "XADD":
 		return handleXAdd(db, cmd)
+	case "XRANGE":
+		return handleXRange(db, cmd)
 	default:
 		return []byte("-ERR unknown command\r\n")
 	}
@@ -230,4 +232,25 @@ func handleXAdd(db *store.Store, cmd Command) []byte {
 		return EncodeError(err.Error())
 	}
 	return EncodeBulkString(id) // return the GENERATED id, not the raw input
+}
+
+func handleXRange(db *store.Store, cmd Command) []byte {
+	key := cmd.Args[1]
+	startID := cmd.Args[2]
+	endID := cmd.Args[3]
+
+	entries, err := db.StreamRange(key, startID, endID)
+	if err != nil {
+		return EncodeError(err.Error())
+	}
+
+	// Each stream entry is encoded as [id, [field, value, ...]]
+	records := make([][]byte, len(entries))
+	for i, entry := range entries {
+		records[i] = EncodeRawArray([][]byte{
+			EncodeBulkString(entry.ID),
+			EncodeArray(entry.Fields),
+		})
+	}
+	return EncodeRawArray(records) // empty array for no matches, not null
 }
