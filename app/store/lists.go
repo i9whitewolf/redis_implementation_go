@@ -1,0 +1,226 @@
+package store
+
+// List operations
+
+func (s *Store) Listlength(key string) (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.listDict[key]
+	if !ok {
+		return 0, false
+	}
+	if e.isExpired() {
+		s.listDeleteLocked(key)
+		return 0, false
+	}
+	return len(e.values), true
+}
+
+func (s *Store) ListLPush(key string, values ...string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.checkType(key, KeyTypeList); err != nil {
+		return 0, err
+	}
+	// Push all values into the list first so the length is correct.
+	e := s.listDict[key]
+	for _, v := range values {
+		e.values = append([]string{v}, e.values...)
+	}
+	s.listDict[key] = e
+	s.keyTypes[key] = KeyTypeList
+	s.incrementVersionLocked(key)
+	newLen := len(e.values)
+
+	// Wake up one BLPOP waiter per pushed value (they pop from the list).
+	for range values {
+		if !s.notifyWaiterFromListLocked(key) {
+			break
+		}
+	}
+	return newLen, nil
+}
+
+func (s *Store) ListPush(key string, values ...string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.checkType(key, KeyTypeList); err != nil {
+		return 0, err
+	}
+	// Push all values into the list first so the length is correct.
+	e := s.listDict[key]
+	e.values = append(e.values, values...)
+	s.listDict[key] = e
+	s.keyTypes[key] = KeyTypeList
+	s.incrementVersionLocked(key)
+	newLen := len(e.values)
+
+	// Wake up one BLPOP waiter per pushed value (they pop from the list).
+	for range values {
+		if !s.notifyWaiterFromListLocked(key) {
+			break
+		}
+	}
+	return newLen, nil
+}
+
+func (s *Store) ListPop(key string, count int) ([]string, bool) {
+	s.mu.Lock() // full lock: modifies the list
+	defer s.mu.Unlock()
+
+	e, ok := s.listDict[key]
+	if !ok {
+		return nil, false
+	}
+	if e.isExpired() {
+		s.listDeleteLocked(key)
+		return nil, false
+	}
+	if len(e.values) == 0 {
+		return nil, false
+	}
+	if count > len(e.values) {
+		count = len(e.values)
+	}
+	popped := make([]string, count)
+	copy(popped, e.values[:count])
+	e.values = e.values[count:]
+	s.listDict[key] = e
+	s.incrementVersionLocked(key)
+	return popped, true
+}
+
+func (s *Store) ListGet(key string) ([]string, bool) {
+	s.mu.Lock() // full lock: expiry may trigger a delete (write)
+	defer s.mu.Unlock()
+
+	e, ok := s.listDict[key]
+	if !ok {
+		return nil, false
+	}
+	if e.isExpired() {
+		s.listDeleteLocked(key)
+		return nil, false
+	}
+	return e.values, true
+}
+
+func (s *Store) ListDelete(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listDeleteLocked(key)
+}
+
+// listDeleteLocked deletes a list key; caller must already hold mu.Lock().
+func (s *Store) listDeleteLocked(key string) {
+	delete(s.listDict, key)
+	delete(s.keyTypes, key)
+	s.incrementVersionLocked(key)
+}
+
+// notifyWaiterFromListLocked pops the head of the list and sends it to the first
+// BLPOP waiter. The channel is buffered(1) so this never blocks.
+// Caller must hold mu.Lock().
+func (s *Store) notifyWaiterFromListLocked(key string) bool {
+	e, ok := s.listDict[key]
+	if !ok || len(e.waiters) == 0 || len(e.values) == 0 {
+		return false
+	}
+	v := e.values[0]
+	e.values = e.values[1:]
+	ch := e.waiters[0]
+	e.waiters = e.waiters[1:]
+	s.listDict[key] = e
+	ch <- v // buffered cap-1 channel; never blocks
+	return true
+}
+
+// ListPopOrWait atomically either pops the head value (if the list is non-empty)
+// or registers ch as a waiter and returns it. This is race-free: no push can
+// slip between the emptiness check and the registration.
+//
+//	value, ok, _  → list had an item; use value directly
+//	"",    false, ch → list was empty; block on ch until a push notifies you
+func (s *Store) ListPopOrWait(key string) (string, bool, chan string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.listDict[key]
+	if ok && !e.isExpired() && len(e.values) > 0 {
+		v := e.values[0]
+		e.values = e.values[1:]
+		s.listDict[key] = e
+		return v, true, nil
+	}
+
+	// List is empty — register as a waiter.
+	ch := make(chan string, 1) // buffered so notifyWaiterLocked never blocks
+	if !ok {
+		// Key doesn't exist yet; create a skeleton entry so waiters are stored.
+		e = listEntry{}
+		s.keyTypes[key] = KeyTypeList
+	}
+	e.waiters = append(e.waiters, ch)
+	s.listDict[key] = e
+	return "", false, ch
+}
+
+// ListRemoveWaiter removes ch from the waiter list (called on timeout cleanup).
+func (s *Store) ListRemoveWaiter(key string, ch chan string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.listDict[key]
+	if !ok {
+		return
+	}
+	for i, w := range e.waiters {
+		if w == ch {
+			e.waiters = append(e.waiters[:i], e.waiters[i+1:]...)
+			break
+		}
+	}
+	s.listDict[key] = e
+}
+
+func (s *Store) ListRange(key string, start, stop int) ([]string, bool) {
+	s.mu.Lock() // full lock: expiry may trigger a delete (write)
+	defer s.mu.Unlock()
+
+	e, ok := s.listDict[key]
+	if !ok {
+		return nil, false
+	}
+	if e.isExpired() {
+		s.listDeleteLocked(key)
+		return nil, false
+	}
+
+	length := len(e.values)
+
+	// Convert negative indices to positive
+	if start < 0 {
+		start = length + start
+	}
+	if stop < 0 {
+		stop = length + stop
+	}
+
+	// Clamp to valid bounds
+	if start < 0 {
+		start = 0
+	}
+	if stop >= length {
+		stop = length - 1
+	}
+
+	// Empty result if start is beyond stop
+	if start > stop {
+		return []string{}, true
+	}
+
+	return e.values[start : stop+1], true
+}

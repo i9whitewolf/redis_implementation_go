@@ -22,4 +22,5 @@ var minArgs = map[string]int{
 	//streams
 	"XADD": 5,
 	"XRANGE": 4,
+	"XREAD": 4,
 }

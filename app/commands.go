@@ -45,6 +45,8 @@ func handleCommand(db *store.Store, cmd Command) []byte {
 		return handleXAdd(db, cmd)
 	case "XRANGE":
 		return handleXRange(db, cmd)
+	case "XREAD":
+		return handleXRead(db, cmd)
 	default:
 		return []byte("-ERR unknown command\r\n")
 	}
@@ -253,4 +255,61 @@ func handleXRange(db *store.Store, cmd Command) []byte {
 		})
 	}
 	return EncodeRawArray(records) // empty array for no matches, not null
+}
+
+func handleXRead(db *store.Store, cmd Command) []byte {
+	// Syntax: XREAD [COUNT n] STREAMS key [key ...] id [id ...]
+	// Find the STREAMS keyword (case-insensitive) to skip optional COUNT.
+	streamsIdx := -1
+	for i, arg := range cmd.Args {
+		if strings.ToUpper(arg) == "STREAMS" {
+			streamsIdx = i
+			break
+		}
+	}
+	if streamsIdx == -1 {
+		return EncodeError("ERR syntax error")
+	}
+
+	// Everything after STREAMS is: key1 key2 ... id1 id2 ...
+	// The list is split in half: first half = keys, second half = start IDs.
+	rest := cmd.Args[streamsIdx+1:]
+	if len(rest) == 0 || len(rest)%2 != 0 {
+		return EncodeError("ERR syntax error")
+	}
+	numStreams := len(rest) / 2
+	keys := rest[:numStreams]
+	startIDs := rest[numStreams:]
+
+	// Build outer array: one [key, entries_array] per stream that has results.
+	streamResults := make([][]byte, 0, numStreams)
+	for i, key := range keys {
+		entries, err := db.StreamRead(key, startIDs[i])
+		if err != nil {
+			return EncodeError(err.Error())
+		}
+		if len(entries) == 0 {
+			continue // skip streams with no new entries
+		}
+
+		// Encode entries as [[id, [field, value, ...]], ...]
+		entryRecords := make([][]byte, len(entries))
+		for j, entry := range entries {
+			entryRecords[j] = EncodeRawArray([][]byte{
+				EncodeBulkString(entry.ID),
+				EncodeArray(entry.Fields),
+			})
+		}
+
+		// Wrap as [stream_key, entries_array]
+		streamResults = append(streamResults, EncodeRawArray([][]byte{
+			EncodeBulkString(key),
+			EncodeRawArray(entryRecords),
+		}))
+	}
+
+	if len(streamResults) == 0 {
+		return EncodeNullArray() // no new data in any stream
+	}
+	return EncodeRawArray(streamResults)
 }
