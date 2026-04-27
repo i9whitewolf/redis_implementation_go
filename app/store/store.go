@@ -49,8 +49,9 @@ type StreamRecord struct {
 type streamData struct {
 	expiry
 	entries []StreamRecord
-	lastMs  uint64 // milliseconds part of the last inserted ID
-	lastSeq uint64 // sequence part of the last inserted ID
+	lastMs  uint64          // milliseconds part of the last inserted ID
+	lastSeq uint64          // sequence part of the last inserted ID
+	waiters []chan struct{} // XREAD BLOCK clients waiting for new data
 }
 
 type Store struct {

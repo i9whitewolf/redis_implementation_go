@@ -258,21 +258,28 @@ func handleXRange(db *store.Store, cmd Command) []byte {
 }
 
 func handleXRead(db *store.Store, cmd Command) []byte {
-	// Syntax: XREAD [COUNT n] STREAMS key [key ...] id [id ...]
-	// Find the STREAMS keyword (case-insensitive) to skip optional COUNT.
+	// Syntax: XREAD [COUNT n] [BLOCK ms] STREAMS key [key ...] id [id ...]
 	streamsIdx := -1
-	for i, arg := range cmd.Args {
-		if strings.ToUpper(arg) == "STREAMS" {
+	blockMs := -1 // -1 means no block
+
+	for i := 1; i < len(cmd.Args); i++ {
+		arg := strings.ToUpper(cmd.Args[i])
+		if arg == "BLOCK" && i+1 < len(cmd.Args) {
+			ms, err := strconv.Atoi(cmd.Args[i+1])
+			if err == nil {
+				blockMs = ms
+			}
+			i++
+		} else if arg == "STREAMS" {
 			streamsIdx = i
 			break
 		}
 	}
+
 	if streamsIdx == -1 {
 		return EncodeError("ERR syntax error")
 	}
 
-	// Everything after STREAMS is: key1 key2 ... id1 id2 ...
-	// The list is split in half: first half = keys, second half = start IDs.
 	rest := cmd.Args[streamsIdx+1:]
 	if len(rest) == 0 || len(rest)%2 != 0 {
 		return EncodeError("ERR syntax error")
@@ -281,12 +288,62 @@ func handleXRead(db *store.Store, cmd Command) []byte {
 	keys := rest[:numStreams]
 	startIDs := rest[numStreams:]
 
-	// Build outer array: one [key, entries_array] per stream that has results.
-	streamResults := make([][]byte, 0, numStreams)
+	// Resolve "$" to top ID
+	for i, id := range startIDs {
+		if id == "$" {
+			startIDs[i] = db.StreamTopID(keys[i])
+		}
+	}
+
+	if blockMs != -1 {
+		ch := make(chan struct{}, 1)
+		for _, key := range keys {
+			db.StreamRegisterWaiter(key, ch)
+		}
+		defer func() {
+			for _, key := range keys {
+				db.StreamRemoveWaiter(key, ch)
+			}
+		}()
+
+		// Try to read first
+		res, err := attemptXRead(db, keys, startIDs)
+		if err != nil {
+			return EncodeError(err.Error())
+		}
+		if len(res) > 0 {
+			return EncodeRawArray(res)
+		}
+
+		// Block
+		if blockMs == 0 {
+			<-ch
+		} else {
+			select {
+			case <-ch:
+			case <-time.After(time.Duration(blockMs) * time.Millisecond):
+				return EncodeNullArray()
+			}
+		}
+	}
+
+	// Read (either non-blocking, or after wakeup)
+	res, err := attemptXRead(db, keys, startIDs)
+	if err != nil {
+		return EncodeError(err.Error())
+	}
+	if len(res) == 0 {
+		return EncodeNullArray()
+	}
+	return EncodeRawArray(res)
+}
+
+func attemptXRead(db *store.Store, keys []string, startIDs []string) ([][]byte, error) {
+	streamResults := make([][]byte, 0, len(keys))
 	for i, key := range keys {
 		entries, err := db.StreamRead(key, startIDs[i])
 		if err != nil {
-			return EncodeError(err.Error())
+			return nil, err
 		}
 		if len(entries) == 0 {
 			continue // skip streams with no new entries
@@ -307,9 +364,5 @@ func handleXRead(db *store.Store, cmd Command) []byte {
 			EncodeRawArray(entryRecords),
 		}))
 	}
-
-	if len(streamResults) == 0 {
-		return EncodeNullArray() // no new data in any stream
-	}
-	return EncodeRawArray(streamResults)
+	return streamResults, nil
 }

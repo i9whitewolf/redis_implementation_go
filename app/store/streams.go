@@ -27,10 +27,60 @@ func (s *Store) StreamAdd(key, rawID string, fields []string) (string, error) {
 	sd.entries = append(sd.entries, StreamRecord{ID: id, Fields: fields})
 	sd.lastMs = ms
 	sd.lastSeq = seq
+
+	// Notify any XREAD BLOCK waiters
+	for _, ch := range sd.waiters {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+
 	s.streamDict[key] = sd
 	s.keyTypes[key] = KeyTypeStream
 	s.incrementVersionLocked(key)
 	return id, nil
+}
+
+// StreamTopID returns the ID of the last entry in the stream, or "0-0" if empty.
+func (s *Store) StreamTopID(key string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sd, ok := s.streamDict[key]
+	if !ok || len(sd.entries) == 0 {
+		return "0-0"
+	}
+	return sd.entries[len(sd.entries)-1].ID
+}
+
+// StreamRegisterWaiter registers a channel to be notified on stream append.
+func (s *Store) StreamRegisterWaiter(key string, ch chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sd, ok := s.streamDict[key]
+	if !ok {
+		sd = streamData{}
+		s.keyTypes[key] = KeyTypeStream
+	}
+	sd.waiters = append(sd.waiters, ch)
+	s.streamDict[key] = sd
+}
+
+// StreamRemoveWaiter removes a notification channel from the stream's waiters.
+func (s *Store) StreamRemoveWaiter(key string, ch chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sd, ok := s.streamDict[key]
+	if !ok {
+		return
+	}
+	for i, w := range sd.waiters {
+		if w == ch {
+			sd.waiters = append(sd.waiters[:i], sd.waiters[i+1:]...)
+			s.streamDict[key] = sd
+			break
+		}
+	}
 }
 
 // resolveStreamID parses or generates the (ms, seq) parts of a stream entry ID.
