@@ -1,33 +1,40 @@
-[![progress-banner](https://backend.codecrafters.io/progress/redis/c99df9ea-7199-4f50-9856-a11f7c72fff4)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# Redis Implementation in Go
 
-This is a starting point for Go solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+This is a custom implementation of a Redis server built from scratch using Go. It aims to replicate the core functionality of Redis, handling concurrent client connections and executing standard Redis commands.
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+## Features
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+- **Custom TCP Server:** Handles multiple concurrent client connections.
+- **RESP (REdis Serialization Protocol) Parser:** Fully implements the protocol to encode and decode messages.
+- **Thread-safe In-Memory Store:** Uses Go's concurrency primitives to ensure data integrity across multiple goroutines.
+- **Supported Data Structures:**
+  - Strings
+  - Lists
+  - Streams
 
-# Passing the first stage
+## Supported Commands
 
-The entry point for your Redis implementation is in `app/main.go`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+The server currently supports the following subset of Redis commands:
 
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
-```
+- `PING` / `ECHO` - Connection testing and simple echoing.
+- `GET` / `SET` / `INCR` - Basic string manipulation and atomic increments.
+- `TYPE` - Returns the type of the value stored at a key.
+- `RPUSH` / `LPOP` / `RPOP` / `LLEN` / `LTRIM` / `BLPOP` - List operations, including blocking pops.
+- `XADD` / `XRANGE` / `XREAD` - Stream operations, including reading with blocking capabilities.
 
-That's all!
+## Running Locally
 
-# Stage 2 & beyond
-
-Note: This section is for stages 2 and beyond.
-
-1. Ensure you have `go (1.26)` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `app/main.go`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+1. Ensure you have Go installed on your system.
+2. Clone the repository.
+3. Start the server using the provided bash script or via `go run`:
+   ```sh
+   ./your_program.sh
+   # OR
+   go run app/*.go
+   ```
+4. Connect to it using `redis-cli` or any other Redis client:
+   ```sh
+   redis-cli -p 6379
+   127.0.0.1:6379> PING
+   PONG
+   ```
